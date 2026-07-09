@@ -63,6 +63,7 @@ device table without waiting to sniff a DHCP renewal.
 | `device_tracker` | Presence per client (SPR `/topology` + sprbus events), with a configurable *consider home* grace period for phones that sleep their Wi-Fi |
 | `sensor` | WAN download/upload rate, WAN download/upload totals (`total_increasing`, metered-connection friendly), connected client count, WAN IP, boot time, load averages (1/5/15m, disabled by default) |
 | `binary_sensor` | WAN connectivity |
+| `button` | Per-device Wake on LAN (disabled by default; also as the `spr.wake_on_lan` service). The router emits the magic packet itself — exposed as a GET so it works within the read-only token scope, and no SPR API is written |
 | `update` | SPR release: installed vs newest published version (read-only; install updates from the SPR UI) |
 
 Device attributes additionally expose wired/wifi, interface, signal, guest

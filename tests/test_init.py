@@ -146,11 +146,17 @@ async def test_setup_creates_entities(
     update = hass.states.get("update.spr_test_spr_release")
     assert update is not None and update.state == "on"  # 1.0.0 -> 1.0.5
 
-    # read-only build: no switches, no buttons
+    # read-only build: no switches; WoL buttons exist but default-disabled
     assert not [s for s in hass.states.async_entity_ids("switch")]
     assert not [s for s in hass.states.async_entity_ids("button")]
-    # and the integration registered no domain services (nothing to write)
-    assert not hass.services.async_services().get(DOMAIN)
+    wake_button = registry.async_get_entity_id(
+        "button", DOMAIN, "aa:bb:cc:dd:ee:01_wake_on_lan"
+    )
+    assert wake_button is not None
+    assert registry.async_get(wake_button).disabled_by is not None
+
+    # the only service is wake_on_lan (a GET on the router; no SPR writes)
+    assert set(hass.services.async_services().get(DOMAIN, {})) == {"wake_on_lan"}
 
 
 async def test_only_get_requests(

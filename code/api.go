@@ -5,7 +5,8 @@ package main
 // Home Assistant reaches it with an SPR token scoped to that path (":r", so
 // GET only). There is no TCP listener and no auth in this process: SPR has
 // already authenticated and authorized the caller, and it strips credentials
-// before proxying. Nothing here mutates SPR state.
+// before proxying. Nothing here mutates SPR state; the one side-effecting
+// route, /ha/v1/wake, emits a Wake-on-LAN packet onto the LAN, no API touch.
 
 import (
 	"encoding/json"
@@ -87,6 +88,30 @@ func handleDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, gState.get().Devices)
 }
 
+// handleWake sends a Wake-on-LAN magic packet. Deliberately a GET so it
+// works through SPR's ":r" (GET-only) token scope: it reads nothing but the
+// device table and writes only a UDP packet to the LAN — never to SPR.
+func handleWake(w http.ResponseWriter, r *http.Request) {
+	mac := normalizeMAC(r.URL.Query().Get("mac"))
+	if !isMAC(mac) {
+		http.Error(w, "invalid mac", http.StatusBadRequest)
+		return
+	}
+	ip := ""
+	for _, d := range gState.get().Devices {
+		if d.MAC == mac {
+			ip = d.IP
+			break
+		}
+	}
+	if err := sendWOL(mac, ip); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Println("wol: magic packet sent for", mac)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -123,6 +148,7 @@ func newRouter() *mux.Router {
 	router.HandleFunc("/ha/v1/probe", handleProbe).Methods("GET")
 	router.HandleFunc("/ha/v1/state", handleState).Methods("GET")
 	router.HandleFunc("/ha/v1/devices", handleDevices).Methods("GET")
+	router.HandleFunc("/ha/v1/wake", handleWake).Methods("GET")
 	router.HandleFunc("/ha/v1/events", handleEvents).Methods("GET")
 	return router
 }

@@ -50,6 +50,9 @@
     "binary_sensor": {
       "wan_status": { "name": "WAN status" }
     },
+    "button": {
+      "wake_on_lan": { "name": "Wake on LAN" }
+    },
     "sensor": {
       "wan_download_rate": { "name": "WAN download rate" },
       "wan_upload_rate": { "name": "WAN upload rate" },
@@ -64,6 +67,18 @@
     },
     "update": {
       "spr_release": { "name": "SPR release" }
+    }
+  },
+  "services": {
+    "wake_on_lan": {
+      "name": "Wake on LAN",
+      "description": "Sends a Wake on LAN magic packet from the SPR router to a device on its network.",
+      "fields": {
+        "mac": {
+          "name": "MAC address",
+          "description": "MAC address of the device to wake."
+        }
+      }
     }
   }
 }

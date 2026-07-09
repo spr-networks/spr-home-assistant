@@ -76,6 +76,14 @@ class SprApiClient:
         """Full state snapshot: router, traffic, devices."""
         return await self._get("/state")
 
+    async def wake_on_lan(self, mac: str) -> None:
+        """Ask the router to emit a Wake-on-LAN magic packet.
+
+        A GET on purpose: it rides the read-only token scope, and the router
+        touches no SPR API for it — it just writes a UDP packet to the LAN.
+        """
+        await self._get(f"/wake?mac={mac}")
+
     async def listen_events(self, callback) -> None:
         """Long-running SSE listener; invokes callback(event_dict) per event.
 
