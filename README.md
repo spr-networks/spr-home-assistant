@@ -1,4 +1,7 @@
-# SPR Home Assistant Integration
+# LLM Autocoded SPR Home Assistant Integration
+
+## NOTE: This was autocoded with LLMs
+
 
 Connects [SPR (Secure Programmable Router)](https://www.supernetworks.org/) to
 [Home Assistant](https://www.home-assistant.io/). **Read-only by design**: the
