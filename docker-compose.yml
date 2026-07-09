@@ -19,7 +19,6 @@ services:
         tags:
         - ghcr.io/spr-networks/home_assistant_integration_ha_sync:latest${RELEASE_CHANNEL:-}
         - ghcr.io/spr-networks/home_assistant_integration_ha_sync:${RELEASE_VERSION:-latest}${RELEASE_CHANNEL:-}
-    network_mode: ${NETWORK_MODE:-host}
     logging: *default-logging
     restart: always
     volumes:
