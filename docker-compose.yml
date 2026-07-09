@@ -1,0 +1,32 @@
+x-logging:
+  &default-logging
+  driver: journald
+
+x-labels:
+  &default-labels
+  # constant (not $CI) so digests are reproducible across CI/local
+  org.supernetworks.ci: "true"
+  org.supernetworks.version: ${RELEASE_VERSION:-latest}${RELEASE_CHANNEL:-}
+
+services:
+  ha_sync:
+    container_name: spr_ha_sync
+    image: ghcr.io/spr-networks/home_assistant_integration_ha_sync:${RELEASE_VERSION:-latest}${RELEASE_CHANNEL:-}
+    build:
+      context: .
+      labels: *default-labels
+      x-bake:
+        tags:
+        - ghcr.io/spr-networks/home_assistant_integration_ha_sync:latest${RELEASE_CHANNEL:-}
+        - ghcr.io/spr-networks/home_assistant_integration_ha_sync:${RELEASE_VERSION:-latest}${RELEASE_CHANNEL:-}
+    network_mode: ${NETWORK_MODE:-host}
+    logging: *default-logging
+    restart: always
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - "${SUPERDIR}./state/plugins/home_assistant:/state/plugins/home_assistant"
+      - "${SUPERDIR}./configs/base:/configs/base:ro"
+      - "${SUPERDIR}./configs/plugins/home_assistant:/configs/plugins/home_assistant"
+      - "${SUPERDIR}./state/public/:/state/public/:ro"
+      - "${SUPERDIR}./state/api/:/state/api/:ro"

@@ -1,0 +1,25 @@
+{
+  "Name": "home_assistant",
+  "URI": "home_assistant",
+  "UnixPath": "/state/plugins/home_assistant/socket",
+  "Enabled": true,
+  "Plus": false,
+  "GitURL": "https://github.com/spr-networks/home_assistant_integration",
+  "ComposeFilePath": "plugins/home_assistant_integration/docker-compose.yml",
+  "HasUI": false,
+  "InstallTokenPath": "/configs/plugins/home_assistant/api-token",
+  "ScopedPaths": [
+    "/devices:r",
+    "/device",
+    "/interfacesConfiguration:r",
+    "/hostapd",
+    "/arp:r",
+    "/info/:r",
+    "/version:r",
+    "/traffic:r",
+    "/release:r",
+    "/ip/:r",
+    "/iw/:r",
+    "/restart"
+  ]
+}
