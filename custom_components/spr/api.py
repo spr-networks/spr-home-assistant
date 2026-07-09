@@ -1,4 +1,9 @@
-"""Async client for the SPR ha_sync plugin API."""
+"""Async client for the SPR ha_sync plugin, via SPR's authenticated proxy.
+
+All requests are GETs to /plugins/home_assistant/ha/v1/* on the router's
+API (port 80/443), authenticated with an SPR token scoped read-only to that
+path. The integration performs no writes, ever.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,8 @@ import logging
 from typing import Any
 
 import aiohttp
+
+from .const import PROXY_BASE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,76 +26,55 @@ class SprApiError(Exception):
 
 
 class SprAuthError(SprApiError):
-    """Invalid or rotated pairing token."""
+    """Invalid or revoked SPR token."""
 
 
 class SprApiClient:
-    """Talks to the ha_sync plugin running on the SPR router."""
+    """Read-only client for the ha_sync plugin behind SPR's API proxy."""
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        host: str,
-        port: int,
+        url: str,
         token: str | None = None,
     ) -> None:
         self._session = session
-        self._host = host
-        self._port = port
+        self._base = url.rstrip("/") + PROXY_BASE
         self._token = token
 
     @property
     def base_url(self) -> str:
-        host = self._host
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"  # bare IPv6 from discovery
-        return f"http://{host}:{self._port}"
+        return self._base
 
     def _headers(self) -> dict[str, str]:
         if not self._token:
             return {}
         return {"Authorization": f"Bearer {self._token}"}
 
-    async def _request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
-    ) -> Any:
+    async def _get(self, path: str) -> Any:
         try:
-            resp = await self._session.request(
-                method,
-                f"{self.base_url}{path}",
-                json=payload,
+            resp = await self._session.get(
+                f"{self._base}{path}",
                 headers=self._headers(),
                 timeout=API_TIMEOUT,
             )
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise SprApiError(f"Error connecting to SPR at {self._host}: {err}") from err
+            raise SprApiError(f"Error connecting to SPR: {err}") from err
 
-        if resp.status == 401:
-            raise SprAuthError("SPR rejected the pairing token")
+        if resp.status in (401, 403):
+            raise SprAuthError("SPR rejected the API token")
         if resp.status >= 400:
             body = await resp.text()
             raise SprApiError(f"SPR API error {resp.status}: {body[:200]}")
         return await resp.json()
 
     async def probe(self) -> dict[str, Any]:
-        """Unauthenticated identify call used by discovery/config flow."""
-        return await self._request("GET", "/api/probe")
+        """Identify the router (id, hostname, version)."""
+        return await self._get("/probe")
 
     async def get_state(self) -> dict[str, Any]:
         """Full state snapshot: router, traffic, devices."""
-        return await self._request("GET", "/api/state")
-
-    async def set_device_blocked(self, mac: str, blocked: bool) -> None:
-        await self._request("PUT", f"/api/device/{mac}/block", {"blocked": blocked})
-
-    async def set_guest_wifi(self, enabled: bool) -> None:
-        await self._request("PUT", "/api/guest_wifi", {"enabled": enabled})
-
-    async def restart_router(self) -> None:
-        await self._request("POST", "/api/system/restart")
-
-    async def wake_on_lan(self, mac: str) -> None:
-        await self._request("POST", "/api/wol", {"mac": mac})
+        return await self._get("/state")
 
     async def listen_events(self, callback) -> None:
         """Long-running SSE listener; invokes callback(event_dict) per event.
@@ -98,7 +84,7 @@ class SprApiClient:
         """
         try:
             resp = await self._session.get(
-                f"{self.base_url}/api/events",
+                f"{self._base}/events",
                 headers=self._headers(),
                 # sock_read > the server's 30s keepalive so a half-open TCP
                 # drop (no FIN) is detected and the loop reconnects instead
@@ -110,8 +96,8 @@ class SprApiClient:
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise SprApiError(f"SSE connect failed: {err}") from err
 
-        if resp.status == 401:
-            raise SprAuthError("SPR rejected the pairing token")
+        if resp.status in (401, 403):
+            raise SprAuthError("SPR rejected the API token")
         if resp.status >= 400:
             raise SprApiError(f"SSE error {resp.status}")
 

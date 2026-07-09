@@ -5,14 +5,13 @@ import (
 )
 
 func main() {
-	log.Println("spr home assistant sync starting")
+	log.Println("spr home assistant sync starting (read-only)")
 	loadConfig()
+	initSPRAPIBase()
 
 	go pollLoop()
 	go sprbusListener()
-	go advertiseMDNS()
-	go startHAServer()
 
-	// Blocks; the unix socket API is what SPR health-checks.
-	startPluginServer()
+	// The unix-socket API is the only listener; SPR proxies it to HA.
+	startUnixServer()
 }

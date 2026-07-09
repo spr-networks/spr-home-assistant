@@ -1,7 +1,9 @@
 {
   "domain": "spr",
   "name": "SPR (Secure Programmable Router)",
-  "codeowners": ["@spr-networks"],
+  "codeowners": [
+    "@spr-networks"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/spr-networks/home_assistant_integration",
@@ -9,6 +11,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/spr-networks/home_assistant_integration/issues",
   "requirements": [],
-  "version": "0.1.0",
-  "zeroconf": ["_spr-ha._tcp.local."]
+  "version": "0.2.0"
 }

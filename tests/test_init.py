@@ -1,12 +1,16 @@
-"""Integration tests: config flow and coordinator against a mocked ha_sync API."""
+"""Integration tests: config flow and coordinator against a mocked SPR proxy."""
 
 from __future__ import annotations
 
-from aiohttp import web
 import pytest
 
 from homeassistant.config_entries import SOURCE_USER
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN, STATE_HOME
+from homeassistant.const import (
+    CONF_TOKEN,
+    CONF_URL,
+    CONF_VERIFY_SSL,
+    STATE_HOME,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -15,7 +19,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 DOMAIN = "spr"
-TOKEN = "test-pairing-token"
+TOKEN = "spr-scoped-readonly-token"
+BASE = "https://192.0.2.1/plugins/home_assistant/ha/v1"
 
 PROBE = {
     "product": "spr",
@@ -71,11 +76,10 @@ STATE = {
 
 @pytest.fixture
 def mock_spr_api(aioclient_mock: AiohttpClientMocker) -> AiohttpClientMocker:
-    base = "http://192.0.2.1:8321"
-    aioclient_mock.get(f"{base}/api/probe", json=PROBE)
-    aioclient_mock.get(f"{base}/api/state", json=STATE)
+    aioclient_mock.get(f"{BASE}/probe", json=PROBE)
+    aioclient_mock.get(f"{BASE}/state", json=STATE)
     # keep the SSE listener from erroring in the background
-    aioclient_mock.get(f"{base}/api/events", exc=OSError("no sse in tests"))
+    aioclient_mock.get(f"{BASE}/events", exc=OSError("no sse in tests"))
     return aioclient_mock
 
 
@@ -89,11 +93,16 @@ async def test_user_flow_creates_entry(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_HOST: "192.0.2.1", CONF_PORT: 8321, CONF_TOKEN: TOKEN},
+        {
+            CONF_URL: "https://192.0.2.1",
+            CONF_TOKEN: TOKEN,
+            CONF_VERIFY_SSL: False,
+        },
     )
     assert result["type"] == "create_entry", result
     assert result["title"] == "spr-test"
     assert result["result"].unique_id == "routerid123"
+    assert result["data"][CONF_URL] == "https://192.0.2.1"
 
 
 async def test_setup_creates_entities(
@@ -102,10 +111,15 @@ async def test_setup_creates_entities(
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="routerid123",
-        data={CONF_HOST: "192.0.2.1", CONF_PORT: 8321, CONF_TOKEN: TOKEN},
+        data={
+            CONF_URL: "https://192.0.2.1",
+            CONF_TOKEN: TOKEN,
+            CONF_VERIFY_SSL: False,
+        },
     )
     entry.add_to_hass(hass)
     assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
     await hass.async_block_till_done()
     assert entry.state.value == "loaded"
 
@@ -129,8 +143,32 @@ async def test_setup_creates_entities(
     wan = hass.states.get("binary_sensor.spr_test_wan_status")
     assert wan is not None and wan.state == "on"
 
-    guest = hass.states.get("switch.spr_test_guest_wi_fi")
-    assert guest is not None and guest.state == "on"
-
     update = hass.states.get("update.spr_test_spr_release")
     assert update is not None and update.state == "on"  # 1.0.0 -> 1.0.5
+
+    # read-only build: no switches, no buttons
+    assert not [s for s in hass.states.async_entity_ids("switch")]
+    assert not [s for s in hass.states.async_entity_ids("button")]
+    # and the integration registered no domain services (nothing to write)
+    assert not hass.services.async_services().get(DOMAIN)
+
+
+async def test_only_get_requests(
+    hass: HomeAssistant, mock_spr_api: AiohttpClientMocker
+) -> None:
+    """Every HTTP call the integration makes must be a GET."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="routerid123",
+        data={
+            CONF_URL: "https://192.0.2.1",
+            CONF_TOKEN: TOKEN,
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    methods = {call[0] for call in mock_spr_api.mock_calls}
+    assert methods == {"GET"}, methods

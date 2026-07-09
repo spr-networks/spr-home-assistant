@@ -1,47 +1,73 @@
 # SPR Home Assistant Integration
 
 Connects [SPR (Secure Programmable Router)](https://www.supernetworks.org/) to
-[Home Assistant](https://www.home-assistant.io/). Two halves, one repo:
+[Home Assistant](https://www.home-assistant.io/). **Read-only by design**: the
+integration observes the network; all control stays in the SPR UI.
+
+Two halves, one repo:
 
 - **`code/` + `docker-compose.yml`** — the `ha_sync` SPR plugin. Runs on the
-  router, aggregates SPR state (devices, wifi stations, ARP, traffic
-  accounting, release info), listens on the sprbus for instant
-  connect/disconnect events, and serves a small token-authenticated HTTP API
-  on the LAN for Home Assistant. It advertises itself over mDNS
-  (`_spr-ha._tcp`) so Home Assistant discovers the router automatically.
+  router, aggregates SPR state (presence via SPR's `/topology`, traffic
+  accounting, uptime/load, release info), listens on the sprbus for instant
+  connect/disconnect events, and serves a small **read-only** API on its
+  plugin unix socket. It opens **no TCP ports**: Home Assistant reaches it
+  through SPR's existing authenticated API proxy at
+  `/plugins/home_assistant/ha/v1/*`.
 - **`custom_components/spr/`** — the Home Assistant custom integration
-  (HACS-compatible layout). Zeroconf-discovered config flow, one
-  `DataUpdateCoordinator` polling cycle, plus a server-sent-events channel so
-  presence updates land within about a second of a device joining or leaving.
+  (HACS-compatible layout). One `DataUpdateCoordinator` polling cycle plus a
+  server-sent-events stream, so presence lands within about a second. It
+  issues **GET requests only** and holds a token that cannot write.
+
+## Architecture and security model
+
+```
+Home Assistant ──HTTPS──> SPR API (443/80) ──unix socket──> ha_sync plugin
+   GET only          scoped token             (read-only routes)
+                     /plugins/home_assistant/:r
+                                                ha_sync ──> SPR API (gateway:80)
+                                                            read-only install token
+                                                ha_sync <── sprbus events (unix)
+```
+
+- The plugin's only listener is its unix socket; SPR authenticates every
+  caller before proxying, and strips credentials so the plugin never sees
+  them. The plugin's route table is GET-only (anything else is 405).
+- Home Assistant authenticates with an SPR API token **scoped to
+  `/plugins/home_assistant/:r`** — the `:r` suffix makes it GET-only at
+  SPR's auth layer, and the path scope means it can reach nothing but this
+  plugin's read-only API. Two independent layers enforce read-only.
+- The plugin talks to the SPR API with its install token, whose
+  `ScopedPaths` in `plugin.json` are all `:r` (read-only). Even a full
+  compromise of the plugin process cannot mutate router state.
+- The plugin finds the SPR API at the container's default gateway (or
+  `127.0.0.1` when `VIRTUAL_SPR=1` puts it in the `service:base`
+  namespace); `SPR_API_BASE` overrides for tests.
+- No mDNS advertisement, no discovery listeners, no broadcast traffic.
+  Setup is manual: you give HA the router URL and the token.
 
 ## Device sync: SPR as a discovery provider for Home Assistant
 
 Every client on the SPR network becomes a `device_tracker` (ScannerEntity)
-registered by MAC address in the Home Assistant device registry, parented to
-the router via `via_device`. These entities publish `ip`, `mac`, and
-`host_name` attributes with `source_type: router` — exactly what Home
-Assistant's DHCP discovery watches
+keyed by MAC address. These entities publish `ip`, `mac`, and `host_name`
+attributes with `source_type: router` — exactly what Home Assistant's DHCP
+discovery watches
 (see [network discovery](https://developers.home-assistant.io/docs/network_discovery/)).
 SPR therefore *teaches* Home Assistant what lives on the network: other
 integrations (ESPHome devices, TVs, printers, …) get discovered from SPR's
 device table without waiting to sniff a DHCP renewal.
 
-## Features
+## Entities
 
 | Platform | Entities |
 | --- | --- |
-| `device_tracker` | Presence per client (wifi station list + ARP + sprbus events), with a configurable *consider home* grace period for phones that sleep their Wi-Fi |
-| `sensor` | WAN download/upload rate, WAN download/upload totals (metered-connection friendly, `total_increasing`), connected client count, WAN IP, boot time, load averages (1/5/15m, disabled by default) |
+| `device_tracker` | Presence per client (SPR `/topology` + sprbus events), with a configurable *consider home* grace period for phones that sleep their Wi-Fi |
+| `sensor` | WAN download/upload rate, WAN download/upload totals (`total_increasing`, metered-connection friendly), connected client count, WAN IP, boot time, load averages (1/5/15m, disabled by default) |
 | `binary_sensor` | WAN connectivity |
-| `switch` | Guest Wi-Fi on/off (extra BSS on every AP), per-device internet blocking via SPR's `wan` policy (parental controls; disabled by default to avoid entity explosion) |
-| `button` | Restart SPR services; per-device Wake on LAN (disabled by default) |
-| `update` | SPR release: installed vs newest published version |
-| service | `spr.wake_on_lan` — magic packet from the router itself |
+| `update` | SPR release: installed vs newest published version (read-only; install updates from the SPR UI) |
 
-Presence is event-driven where possible: the plugin subscribes to
-`wifi:auth:success`, `wifi:station:disconnect`, `dhcp:request` and `device:*`
-sprbus topics and pushes transitions to Home Assistant over SSE, so
-automations like "turn off the lights when everyone leaves" react quickly.
+Device attributes additionally expose wired/wifi, interface, signal, guest
+flag, and whether the device's internet is blocked — usable in automations
+as read-only signals.
 
 ## Installing the SPR plugin
 
@@ -54,33 +80,23 @@ cat configs/base/custom_compose_paths.json | \
   jq '. + ["plugins/home_assistant_integration/docker-compose.yml"]'
 ```
 
-SPR writes a scoped API token (see `ScopedPaths` in `plugin.json` — the
-plugin can read state and edit devices/wifi, nothing else) to
-`configs/plugins/home_assistant/api-token`. On first start the plugin
-generates:
-
-- a **pairing token** Home Assistant must present (`HAToken`), and
-- a stable `RouterID` used by discovery.
-
-Get the pairing token from the plugin API (or the SPR UI plugin page):
-
-```sh
-curl --unix-socket state/plugins/home_assistant/socket http://localhost/config
-# rotate it any time:
-curl -X PUT --unix-socket state/plugins/home_assistant/socket http://localhost/token/rotate
-```
+SPR writes the plugin's read-only install token to
+`configs/plugins/home_assistant/api-token`.
 
 ## Installing the Home Assistant integration
 
-- **HACS**: add this repository as a custom repository (type: integration),
-  install "SPR (Secure Programmable Router)".
-- **Manual**: copy `custom_components/spr/` into your Home Assistant
-  `config/custom_components/`.
-
-Restart Home Assistant. If HA and SPR share a broadcast domain the router is
-discovered automatically (`_spr-ha._tcp` via zeroconf) — enter the pairing
-token when prompted. Otherwise add it via **Settings → Devices & Services →
-Add Integration → SPR** with host, port (default `8321`) and token.
+1. In the SPR UI, create an API token for Home Assistant with the scoped
+   path **`/plugins/home_assistant/:r`** (Auth → API Tokens). The `:r`
+   scope makes the token GET-only.
+2. Install the integration:
+   - **HACS**: add this repository as a custom repository (type:
+     integration), install "SPR (Secure Programmable Router)".
+   - **Manual**: copy `custom_components/spr/` into your Home Assistant
+     `config/custom_components/`.
+3. Restart Home Assistant, then **Settings → Devices & Services → Add
+   Integration → SPR**. Enter the router URL (e.g. `https://192.168.2.1`)
+   and the token. Leave *Verify SSL* off for SPR's self-signed certificate,
+   or on if you've installed a proper one.
 
 Options (⚙ on the integration): *consider home* seconds, and whether new
 devices start with tracking enabled.
@@ -113,23 +129,12 @@ Re-pin inputs (review with `git diff` afterwards):
 
 CI (`.github/workflows/docker-image.yml`) builds multi-arch images the same
 way, signs them with cosign (keyless, GitHub OIDC) and attaches SLSA
-provenance attestations, then verifies both. `validate.yml` runs the Go unit
-tests and Home Assistant's hassfest on every push.
+provenance attestations, then verifies both. GitHub Actions are SHA-pinned
+where third-party. `validate.yml` runs the Go unit tests, Home Assistant's
+hassfest, and the HA integration tests on every push.
 
-Run the unit tests in a container:
+Run the plugin unit tests in a container:
 
 ```sh
 ./test-unit.sh
 ```
-
-## Security model
-
-- The LAN API is bearer-token authenticated (constant-time compare); only
-  `/api/probe` (product name, version, router id — no device data) is open,
-  because the HA config flow needs to identify the router before pairing.
-- The plugin's SPR API token is scoped (`ScopedPaths`) to the endpoints it
-  needs; most are read-only (`:r`).
-- Rotating the pairing token from the SPR side immediately locks out Home
-  Assistant, which then prompts for re-authentication.
-- No cloud, no outbound connections: everything stays on your LAN. The only
-  remote call is SPR's own registry query for available release tags.

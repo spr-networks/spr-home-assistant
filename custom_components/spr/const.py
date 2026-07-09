@@ -4,7 +4,12 @@ from datetime import timedelta
 
 DOMAIN = "spr"
 
-DEFAULT_PORT = 8321
+# HA reaches the plugin through SPR's authenticated API proxy. This is the
+# proxy prefix; the plugin serves the /ha/v1/* routes behind it.
+PROXY_BASE = "/plugins/home_assistant/ha/v1"
+
+DEFAULT_VERIFY_SSL = False  # SPR ships a self-signed cert on the LAN
+
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=10)
 
 CONF_CONSIDER_HOME = "consider_home"

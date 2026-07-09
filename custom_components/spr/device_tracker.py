@@ -52,9 +52,19 @@ class SprScannerEntity(SprDeviceEntity, ScannerEntity):
     def __init__(self, coordinator: SprCoordinator, mac: str) -> None:
         super().__init__(coordinator, mac, "tracker")
         self._attr_unique_id = self._mac
-        self._attr_entity_registry_enabled_default = coordinator.config_entry.options.get(
+        self._track_new = coordinator.config_entry.options.get(
             CONF_TRACK_NEW_DEVICES, DEFAULT_TRACK_NEW_DEVICES
         )
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        """Honor the track-new-devices option.
+
+        ScannerEntity's base property auto-disables trackers whose MAC has no
+        device registry entry; since this integration is read-only it creates
+        no client device entries, so that heuristic would disable everything.
+        """
+        return self._track_new
 
     @property
     def is_connected(self) -> bool:

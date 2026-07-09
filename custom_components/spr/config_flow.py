@@ -1,4 +1,9 @@
-"""Config flow for the SPR integration."""
+"""Config flow for the SPR integration.
+
+Manual setup only: the integration reaches the router through SPR's own
+authenticated API, so the user supplies the router URL and a read-only
+scoped SPR token. Nothing is advertised or discovered on the network.
+"""
 
 from __future__ import annotations
 
@@ -13,18 +18,17 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN
+from homeassistant.const import CONF_TOKEN, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .api import SprApiClient, SprApiError, SprAuthError
 from .const import (
     CONF_CONSIDER_HOME,
     CONF_TRACK_NEW_DEVICES,
     DEFAULT_CONSIDER_HOME,
-    DEFAULT_PORT,
     DEFAULT_TRACK_NEW_DEVICES,
+    DEFAULT_VERIFY_SSL,
     DOMAIN,
 )
 
@@ -32,9 +36,9 @@ _LOGGER = logging.getLogger(__name__)
 
 USER_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+        vol.Required(CONF_URL, default="https://192.168.2.1"): str,
         vol.Required(CONF_TOKEN): str,
+        vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
     }
 )
 
@@ -50,15 +54,17 @@ OPTIONS_SCHEMA = vol.Schema(
 )
 
 
+def _normalize_url(url: str) -> str:
+    url = url.strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url
+
+
 class SprConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle SPR config flow: manual entry plus zeroconf discovery."""
+    """Handle SPR config flow: router URL + read-only scoped token."""
 
     VERSION = 1
-
-    def __init__(self) -> None:
-        self._host: str | None = None
-        self._port: int = DEFAULT_PORT
-        self._name: str = "SPR"
 
     @staticmethod
     @callback
@@ -66,10 +72,11 @@ class SprConfigFlow(ConfigFlow, domain=DOMAIN):
         return SprOptionsFlow()
 
     async def _async_validate(
-        self, host: str, port: int, token: str
+        self, url: str, token: str, verify_ssl: bool
     ) -> tuple[dict[str, str], dict[str, Any] | None]:
         """Try the credentials; return (errors, probe_info)."""
-        api = SprApiClient(async_get_clientsession(self.hass), host, port, token)
+        session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
+        api = SprApiClient(session, url, token)
         try:
             probe = await api.probe()
             await api.get_state()
@@ -82,24 +89,24 @@ class SprConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manual setup: host, port, pairing token."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            url = _normalize_url(user_input[CONF_URL])
             errors, probe = await self._async_validate(
-                user_input[CONF_HOST], user_input[CONF_PORT], user_input[CONF_TOKEN]
+                url, user_input[CONF_TOKEN], user_input[CONF_VERIFY_SSL]
             )
             if not errors:
                 router_id = probe.get("id") or ""
                 if router_id:
                     await self.async_set_unique_id(router_id)
-                    self._abort_if_unique_id_configured(
-                        updates={
-                            CONF_HOST: user_input[CONF_HOST],
-                            CONF_PORT: user_input[CONF_PORT],
-                        }
-                    )
+                    self._abort_if_unique_id_configured(updates={CONF_URL: url})
                 return self.async_create_entry(
-                    title=probe.get("hostname") or "SPR", data=user_input
+                    title=probe.get("hostname") or "SPR",
+                    data={
+                        CONF_URL: url,
+                        CONF_TOKEN: user_input[CONF_TOKEN],
+                        CONF_VERIFY_SSL: user_input[CONF_VERIFY_SSL],
+                    },
                 )
         return self.async_show_form(
             step_id="user",
@@ -107,72 +114,8 @@ class SprConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_zeroconf(
-        self, discovery_info: ZeroconfServiceInfo
-    ) -> ConfigFlowResult:
-        """Discovered a router advertising _spr-ha._tcp."""
-        router_id = discovery_info.properties.get("id")
-        if not router_id:
-            return self.async_abort(reason="cannot_connect")
-
-        self._host = discovery_info.host
-        self._port = discovery_info.port or DEFAULT_PORT
-        self._name = discovery_info.name.split(".")[0]
-
-        await self.async_set_unique_id(router_id)
-
-        # Before letting a broadcast rewrite where an existing entry (and its
-        # pairing token) points, require the advertised host to answer the
-        # probe with the same router id.
-        api = SprApiClient(
-            async_get_clientsession(self.hass), self._host, self._port
-        )
-        try:
-            probe = await api.probe()
-        except SprApiError:
-            probe = None
-
-        if probe and probe.get("id") == router_id:
-            self._abort_if_unique_id_configured(
-                updates={CONF_HOST: self._host, CONF_PORT: self._port}
-            )
-        else:
-            self._abort_if_unique_id_configured()
-
-        if not probe:
-            return self.async_abort(reason="cannot_connect")
-
-        self.context["title_placeholders"] = {"name": self._name}
-        return await self.async_step_pair()
-
-    async def async_step_pair(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Ask for the pairing token after discovery."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            assert self._host is not None
-            errors, probe = await self._async_validate(
-                self._host, self._port, user_input[CONF_TOKEN]
-            )
-            if not errors:
-                return self.async_create_entry(
-                    title=probe.get("hostname") or self._name,
-                    data={
-                        CONF_HOST: self._host,
-                        CONF_PORT: self._port,
-                        CONF_TOKEN: user_input[CONF_TOKEN],
-                    },
-                )
-        return self.async_show_form(
-            step_id="pair",
-            data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}),
-            description_placeholders={"name": self._name, "host": self._host or ""},
-            errors=errors,
-        )
-
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
-        """Pairing token was rotated on the router."""
+        """The SPR token was revoked or rotated on the router."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -182,7 +125,9 @@ class SprConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         if user_input is not None:
             errors, _ = await self._async_validate(
-                entry.data[CONF_HOST], entry.data[CONF_PORT], user_input[CONF_TOKEN]
+                entry.data[CONF_URL],
+                user_input[CONF_TOKEN],
+                entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
             )
             if not errors:
                 return self.async_update_reload_and_abort(

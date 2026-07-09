@@ -11,16 +11,13 @@
   "ScopedPaths": [
     "/topology:r",
     "/devices:r",
-    "/device",
     "/interfacesConfiguration:r",
-    "/hostapd",
+    "/hostapd:r",
     "/arp:r",
     "/info/:r",
     "/version:r",
     "/traffic:r",
     "/release:r",
-    "/ip/:r",
-    "/iw/:r",
-    "/restart"
+    "/ip/:r"
   ]
 }

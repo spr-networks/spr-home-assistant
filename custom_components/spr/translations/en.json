@@ -1,43 +1,35 @@
 {
   "config": {
-    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Connect to SPR",
-        "description": "Enter the address of your SPR router and the pairing token from the Home Assistant plugin (SPR UI → Plugins → home_assistant).",
+        "description": "Enter your SPR router's URL and a read-only API token. Create the token in the SPR UI (Auth → API Tokens) with the scoped path `/plugins/home_assistant/:r`.",
         "data": {
-          "host": "Host",
-          "port": "Port",
-          "token": "Pairing token"
+          "url": "Router URL",
+          "token": "API token (read-only scope)",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
-          "host": "IP address or hostname of the SPR router",
-          "port": "Port of the ha_sync plugin API (default 8321)",
-          "token": "Shown in the SPR UI on the plugin page"
-        }
-      },
-      "pair": {
-        "title": "Pair with {name}",
-        "description": "Found SPR at {host}. Enter the pairing token from the SPR UI (Plugins → home_assistant) to finish setup.",
-        "data": {
-          "token": "Pairing token"
+          "url": "For example https://192.168.2.1 or https://spr.local",
+          "token": "An SPR token scoped to /plugins/home_assistant/:r — it can only read",
+          "verify_ssl": "Disable for SPR's default self-signed certificate"
         }
       },
       "reauth_confirm": {
-        "title": "Re-pair with SPR",
-        "description": "The pairing token was rotated on the router. Enter the new token.",
+        "title": "Re-authenticate with SPR",
+        "description": "The API token was revoked or rotated on the router. Enter the new read-only token.",
         "data": {
-          "token": "Pairing token"
+          "token": "API token (read-only scope)"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid pairing token"
+      "invalid_auth": "Invalid API token"
     },
     "abort": {
       "already_configured": "This SPR router is already configured",
-      "reauth_successful": "Re-pairing was successful"
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {
@@ -58,10 +50,6 @@
     "binary_sensor": {
       "wan_status": { "name": "WAN status" }
     },
-    "button": {
-      "restart": { "name": "Restart" },
-      "wake_on_lan": { "name": "Wake on LAN" }
-    },
     "sensor": {
       "wan_download_rate": { "name": "WAN download rate" },
       "wan_upload_rate": { "name": "WAN upload rate" },
@@ -74,24 +62,8 @@
       "load_5m": { "name": "Load (5m)" },
       "load_15m": { "name": "Load (15m)" }
     },
-    "switch": {
-      "guest_wifi": { "name": "Guest Wi-Fi" },
-      "block_internet": { "name": "Block internet" }
-    },
     "update": {
       "spr_release": { "name": "SPR release" }
-    }
-  },
-  "services": {
-    "wake_on_lan": {
-      "name": "Wake on LAN",
-      "description": "Sends a Wake on LAN magic packet to a device on the SPR network.",
-      "fields": {
-        "mac": {
-          "name": "MAC address",
-          "description": "MAC address of the device to wake."
-        }
-      }
     }
   }
 }

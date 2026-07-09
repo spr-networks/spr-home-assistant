@@ -33,20 +33,6 @@ func mockSPR(t *testing.T) (*httptest.Server, *map[string]DeviceEntry) {
 		}
 	}
 	mux.HandleFunc("/devices", writeAs(devices))
-	mux.HandleFunc("/device", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			http.Error(w, "method", 405)
-			return
-		}
-		identity := r.URL.Query().Get("identity")
-		var entry DeviceEntry
-		if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		devices[identity] = entry
-		_ = json.NewEncoder(w).Encode(entry)
-	})
 	mux.HandleFunc("/interfacesConfiguration", writeAs([]InterfaceConfig{
 		{Name: "wlan0", Type: "AP", Enabled: true,
 			ExtraBSS: []ExtraBSS{{Ssid: "guests", Wpa: "2"}}},
@@ -56,13 +42,6 @@ func mockSPR(t *testing.T) (*httptest.Server, *map[string]DeviceEntry) {
 		"aa:bb:cc:dd:ee:01": {"signal": "-52", "rx_bytes": "1000", "tx_bytes": "2000"},
 	}))
 	mux.HandleFunc("/hostapd/wlan0.ap0/all_stations", writeAs(map[string]map[string]string{}))
-	mux.HandleFunc("/hostapd/wlan0/enableExtraBSS", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut && r.Method != http.MethodDelete {
-			http.Error(w, "method", 405)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-	})
 	mux.HandleFunc("/arp", writeAs([]ArpEntry{
 		{IP: "192.168.2.101", MAC: "aa:bb:cc:dd:ee:02", Flags: "0x2", Device: "eth1"},
 		{IP: "1.2.3.4", MAC: "aa:bb:cc:dd:ee:99", Flags: "0x2", Device: "eth0"},   // wan side, ignored
@@ -156,9 +135,8 @@ func setupTestEnv(t *testing.T, server *httptest.Server) {
 	oldBase := SPRAPIBase
 	SPRAPIBase = server.URL
 	dir := t.TempDir()
-	oldToken, oldGuest, oldConfig := APITokenFile, GuestBSSFile, ConfigFile
+	oldToken, oldConfig := APITokenFile, ConfigFile
 	APITokenFile = filepath.Join(dir, "api-token")
-	GuestBSSFile = filepath.Join(dir, "guest_bss.json")
 	ConfigFile = filepath.Join(dir, "config.json")
 	_ = os.WriteFile(APITokenFile, []byte("test-token\n"), 0o600)
 	gState.mtx.Lock()
@@ -173,7 +151,7 @@ func setupTestEnv(t *testing.T, server *httptest.Server) {
 	versionCheckMtx.Unlock()
 	t.Cleanup(func() {
 		SPRAPIBase = oldBase
-		APITokenFile, GuestBSSFile, ConfigFile = oldToken, oldGuest, oldConfig
+		APITokenFile, ConfigFile = oldToken, oldConfig
 	})
 }
 
@@ -237,123 +215,43 @@ func TestRefreshState(t *testing.T) {
 	}
 }
 
-func TestSetDeviceBlocked(t *testing.T) {
-	server, devices := mockSPR(t)
-	setupTestEnv(t, server)
-
-	if err := sprSetDeviceBlocked("aa:bb:cc:dd:ee:01", true); err != nil {
-		t.Fatal(err)
-	}
-	entry := (*devices)["aa:bb:cc:dd:ee:01"]
-	for _, p := range entry.Policies {
-		if p == "wan" {
-			t.Fatal("wan policy not removed")
-		}
-	}
-	if entry.PSKEntry.Psk != "" || entry.PSKEntry.Type != "" {
-		t.Error("PSK must be scrubbed before writing back")
-	}
-
-	if err := sprSetDeviceBlocked("aa:bb:cc:dd:ee:01", false); err != nil {
-		t.Fatal(err)
-	}
-	entry = (*devices)["aa:bb:cc:dd:ee:01"]
-	if !hasWAN(entry) {
-		t.Fatal("wan policy not restored")
-	}
-
-	if err := sprSetDeviceBlocked("00:00:00:00:00:99", true); err == nil {
-		t.Error("expected error for unknown device")
-	}
-}
-
-func TestGuestWifiRoundTrip(t *testing.T) {
-	server, _ := mockSPR(t)
-	setupTestEnv(t, server)
-
-	// disable stashes the BSS config
-	if err := sprSetGuestWifi(false); err != nil {
-		t.Fatal("disable:", err)
-	}
-	saved := loadSavedGuestBSS()
-	if bss, ok := saved["wlan0"]; !ok || bss.Ssid != "guests" {
-		t.Fatalf("guest BSS not stashed: %+v", saved)
-	}
-
-	// enable restores it (mock keeps reporting ExtraBSS present, fine here)
-	if err := sprSetGuestWifi(true); err != nil {
-		t.Fatal("enable:", err)
-	}
-}
-
-func TestHAAuth(t *testing.T) {
+// The read-only API carries no auth of its own: SPR's proxy authenticates
+// and authorizes callers, and only exposes GET. Verify the router table has
+// no mutating methods and that state/probe serve.
+func TestReadOnlyRouter(t *testing.T) {
 	server, _ := mockSPR(t)
 	setupTestEnv(t, server)
 	loadConfig()
+	refreshState()
 
-	handler := requireAuth(handleState)
+	router := newRouter()
 
-	req := httptest.NewRequest("GET", "/api/state", nil)
+	// state serves
 	rec := httptest.NewRecorder()
-	handler(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no token: got %d, want 401", rec.Code)
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/ha/v1/state", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "devices") {
+		t.Fatalf("state: code %d body %s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest("GET", "/api/state", nil)
-	req.Header.Set("Authorization", "Bearer wrong")
-	rec = httptest.NewRecorder()
-	handler(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bad token: got %d, want 401", rec.Code)
-	}
-
-	req = httptest.NewRequest("GET", "/api/state", nil)
-	req.Header.Set("Authorization", "Bearer "+configCopy().HAToken)
-	rec = httptest.NewRecorder()
-	handler(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("valid token: got %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "devices") {
-		t.Error("state response missing devices")
-	}
-}
-
-func TestLanOnly(t *testing.T) {
-	handler := lanOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	cases := []struct {
-		remote string
-		want   int
-	}{
-		{"192.168.2.50:1234", http.StatusOK},
-		{"10.0.0.5:1234", http.StatusOK},
-		{"127.0.0.1:1234", http.StatusOK},
-		{"[fe80::1]:1234", http.StatusOK},
-		{"[fd00::1]:1234", http.StatusOK}, // ULA is private
-		{"203.0.113.9:1234", http.StatusForbidden},
-		{"[2001:db8::1]:1234", http.StatusForbidden},
-	}
-	for _, c := range cases {
-		req := httptest.NewRequest("GET", "/api/probe", nil)
-		req.RemoteAddr = c.remote
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		if rec.Code != c.want {
-			t.Errorf("remote %s: got %d, want %d", c.remote, rec.Code, c.want)
+	// any non-GET method is rejected on every route
+	for _, method := range []string{"PUT", "POST", "DELETE", "PATCH"} {
+		for _, path := range []string{"/ha/v1/state", "/ha/v1/devices", "/ha/v1/probe"} {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s: got %d, want 405 (API must be read-only)", method, path, rec.Code)
+			}
 		}
 	}
 }
 
-func TestProbeUnauthenticated(t *testing.T) {
+func TestProbe(t *testing.T) {
 	server, _ := mockSPR(t)
 	setupTestEnv(t, server)
 	loadConfig()
 
 	rec := httptest.NewRecorder()
-	handleProbe(rec, httptest.NewRequest("GET", "/api/probe", nil))
+	handleProbe(rec, httptest.NewRequest("GET", "/ha/v1/probe", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("probe: got %d", rec.Code)
 	}

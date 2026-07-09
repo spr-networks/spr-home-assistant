@@ -29,7 +29,7 @@ class SprRouterEntity(CoordinatorEntity[SprCoordinator]):
             model=ATTR_MODEL,
             name=coordinator.data.router.get("hostname") or "SPR",
             sw_version=coordinator.data.router.get("version"),
-            configuration_url=f"http://{entry.data['host']}",
+            configuration_url=entry.data["url"],
         )
 
 
