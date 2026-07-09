@@ -13,6 +13,8 @@ jobs:
 
   buildx:
     runs-on: ubuntu-latest
+    # Don't build/publish off a failed "Bump version" run
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: write

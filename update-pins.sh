@@ -54,7 +54,10 @@ DOCKERFILES=()
 while IFS= read -r f; do DOCKERFILES+=("$f"); done < <(find . -path ./node_modules -prune -o -type f -name 'Dockerfile*' -print)
 replace_line() {  # <file> <sed-pattern> <new-line>  (sed: no @/$ interpolation)
   local f="$1" pat="$2" new="$3" tmp; tmp=$(mktemp)
-  sed "s|${pat}|${new}|" "$f" > "$tmp" && mv "$tmp" "$f"
+  # Escape sed replacement metachars (\, &, |) in the (registry/go.dev-derived)
+  # value so a value containing them can't mangle the substitution.
+  local esc; esc=$(printf '%s' "$new" | sed -e 's/[\\&|]/\\&/g')
+  sed "s|${pat}|${esc}|" "$f" > "$tmp" && mv "$tmp" "$f"
 }
 while IFS='=' read -r k v; do
   case "$k" in ''|\#*) continue;; esac

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -321,7 +322,9 @@ func sprSetDeviceBlocked(mac string, blocked bool) error {
 	// Never write masked PSKs back
 	entry.PSKEntry = PSKEntry{}
 
-	return sprRequest("PUT", "/device?identity="+identity, entry, nil)
+	// identity is server-supplied (a devices-map key), but encode it anyway
+	// so an odd key never breaks or injects query params
+	return sprRequest("PUT", "/device?identity="+url.QueryEscape(identity), entry, nil)
 }
 
 // sprSetGuestWifi toggles the guest SSID (extra BSS) on every enabled AP

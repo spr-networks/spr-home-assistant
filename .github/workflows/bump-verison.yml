@@ -12,7 +12,9 @@ jobs:
       with:
         fetch-depth: '0'
     - name: Bump version and push tag
-      uses: anothrNick/github-tag-action@1.40.0
+      # SHA-pinned (tag 1.40.0) — this third-party action runs with a
+      # tag-pushing GITHUB_TOKEN, so it must not float on a movable tag
+      uses: anothrNick/github-tag-action@38e273cbdda80759cc0232a36f559999f4e47d29
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         WITH_V: true

@@ -120,9 +120,28 @@ class SprConfigFlow(ConfigFlow, domain=DOMAIN):
         self._name = discovery_info.name.split(".")[0]
 
         await self.async_set_unique_id(router_id)
-        self._abort_if_unique_id_configured(
-            updates={CONF_HOST: self._host, CONF_PORT: self._port}
+
+        # Before letting a broadcast rewrite where an existing entry (and its
+        # pairing token) points, require the advertised host to answer the
+        # probe with the same router id.
+        api = SprApiClient(
+            async_get_clientsession(self.hass), self._host, self._port
         )
+        try:
+            probe = await api.probe()
+        except SprApiError:
+            probe = None
+
+        if probe and probe.get("id") == router_id:
+            self._abort_if_unique_id_configured(
+                updates={CONF_HOST: self._host, CONF_PORT: self._port}
+            )
+        else:
+            self._abort_if_unique_id_configured()
+
+        if not probe:
+            return self.async_abort(reason="cannot_connect")
+
         self.context["title_placeholders"] = {"name": self._name}
         return await self.async_step_pair()
 

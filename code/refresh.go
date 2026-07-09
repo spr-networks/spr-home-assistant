@@ -26,16 +26,8 @@ func refreshState() {
 		ifaces = nil
 	}
 
-	type stationInfo struct {
-		iface   string
-		signal  int
-		rxBytes uint64
-		txBytes uint64
-	}
-	stations := map[string]stationInfo{}
 	guestEnabled := false
 	wanIface := ""
-
 	for _, iface := range ifaces {
 		switch iface.Type {
 		case "Uplink":
@@ -46,7 +38,25 @@ func refreshState() {
 			if len(iface.ExtraBSS) > 0 {
 				guestEnabled = true
 			}
-			if !iface.Enabled {
+		}
+	}
+
+	// presence: prefer SPR's own /topology merge; fall back to a local
+	// hostapd+ARP merge on releases that don't have the endpoint
+	topo, topoOK := fetchTopologyPresence()
+
+	type stationInfo struct {
+		iface   string
+		signal  int
+		rxBytes uint64
+		txBytes uint64
+	}
+	stations := map[string]stationInfo{}
+	arpSeen := map[string]string{} // mac -> iface, learned entries only
+
+	if !topoOK {
+		for _, iface := range ifaces {
+			if iface.Type != "AP" || !iface.Enabled {
 				continue
 			}
 			names := []string{iface.Name}
@@ -67,22 +77,22 @@ func refreshState() {
 				}
 			}
 		}
-	}
 
-	arpSeen := map[string]string{} // mac -> iface, complete entries only
-	for _, entry := range fetchArp() {
-		if entry.Device == wanIface {
-			continue
-		}
-		flags, err := strconv.ParseInt(strings.TrimPrefix(entry.Flags, "0x"), 16, 32)
-		// need a learned, complete entry (0x2): SPR seeds permanent (0x4)
-		// entries for known devices, which say nothing about presence
-		if err != nil || flags&0x2 == 0 || flags&0x4 != 0 {
-			continue
-		}
-		mac := normalizeMAC(entry.MAC)
-		if isMAC(mac) {
-			arpSeen[mac] = entry.Device
+		for _, entry := range fetchArp() {
+			if entry.Device == wanIface {
+				continue
+			}
+			flags, err := strconv.ParseInt(strings.TrimPrefix(entry.Flags, "0x"), 16, 32)
+			// need a learned, complete entry (0x2): SPR seeds permanent
+			// (0x4) entries for known devices, which say nothing about
+			// presence
+			if err != nil || flags&0x2 == 0 || flags&0x4 != 0 {
+				continue
+			}
+			mac := normalizeMAC(entry.MAC)
+			if isMAC(mac) {
+				arpSeen[mac] = entry.Device
+			}
 		}
 	}
 
@@ -165,7 +175,14 @@ func refreshState() {
 			}
 		}
 
-		if sta, ok := stations[mac]; ok {
+		if topoOK {
+			if p, ok := topo[mac]; ok && p.online {
+				td.Connected = true
+				td.Wired = p.connType == "wired"
+				td.Iface = p.iface
+				td.Signal = p.signal
+			}
+		} else if sta, ok := stations[mac]; ok {
 			td.Connected = true
 			td.Iface = sta.iface
 			td.Signal = sta.signal

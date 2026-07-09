@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -40,6 +41,10 @@ func pluginSetConfig(w http.ResponseWriter, r *http.Request) {
 	var next Config
 	if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if next.ListenPort < 0 || next.ListenPort > 65535 {
+		http.Error(w, "invalid ListenPort", http.StatusBadRequest)
 		return
 	}
 	ConfigMtx.Lock()
@@ -77,7 +82,12 @@ func startPluginServer() {
 	if err != nil {
 		log.Fatal("plugin listener:", err)
 	}
-	server := http.Server{Handler: router}
+	// only the SPR API proxy (root in the api container) needs to connect
+	_ = os.Chmod(UNIX_PLUGIN_LISTENER, 0o660)
+	server := http.Server{
+		Handler:           http.MaxBytesHandler(router, 64*1024),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	log.Println("plugin API listening on", UNIX_PLUGIN_LISTENER)
 	log.Fatal(server.Serve(listener))
 }

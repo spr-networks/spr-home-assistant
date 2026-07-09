@@ -93,6 +93,64 @@ func mockSPR(t *testing.T) (*httptest.Server, *map[string]DeviceEntry) {
 	return server, &devices
 }
 
+// mockSPRWithTopology layers a /topology endpoint over the base mock, the
+// way current SPR releases respond.
+func mockSPRWithTopology(t *testing.T) *httptest.Server {
+	base, _ := mockSPR(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/topology", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(topoResponse{Nodes: []TopoNode{
+			{ID: "router", Kind: "router", Online: true},
+			{ID: "dev:aa:bb:cc:dd:ee:01", Kind: "device", MAC: "aa:bb:cc:dd:ee:01",
+				IP: "192.168.2.100", ConnType: "wifi", Iface: "wlan1",
+				Signal: &TopoSignal{RSSI: -61}, Online: true},
+			{ID: "dev:aa:bb:cc:dd:ee:02", Kind: "device", MAC: "aa:bb:cc:dd:ee:02",
+				IP: "192.168.2.101", ConnType: "offline", Online: false},
+		}})
+	})
+	mux.HandleFunc("/hostapd/", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("topology available: station lists must not be fetched")
+	})
+	mux.HandleFunc("/arp", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("topology available: arp must not be fetched")
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		base.Config.Handler.ServeHTTP(w, r)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestRefreshStateTopology(t *testing.T) {
+	server := mockSPRWithTopology(t)
+	setupTestEnv(t, server)
+
+	refreshState()
+	snap := gState.get()
+
+	byMAC := map[string]TrackedDevice{}
+	for _, d := range snap.Devices {
+		byMAC[d.MAC] = d
+	}
+
+	phone := byMAC["aa:bb:cc:dd:ee:01"]
+	if !phone.Connected || phone.Wired || phone.Iface != "wlan1" || phone.Signal != -61 {
+		t.Errorf("phone presence should come from topology: %+v", phone)
+	}
+	if phone.RxBytes != 5000 || phone.TxBytes != 700 {
+		t.Errorf("per-IP counters should still apply: %+v", phone)
+	}
+
+	printer := byMAC["aa:bb:cc:dd:ee:02"]
+	if printer.Connected {
+		t.Errorf("printer offline in topology, must not be connected: %+v", printer)
+	}
+	if snap.Router.ClientsConnected != 1 {
+		t.Errorf("clients connected = %d, want 1", snap.Router.ClientsConnected)
+	}
+}
+
 func setupTestEnv(t *testing.T, server *httptest.Server) {
 	t.Helper()
 	oldBase := SPRAPIBase
@@ -259,6 +317,33 @@ func TestHAAuth(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "devices") {
 		t.Error("state response missing devices")
+	}
+}
+
+func TestLanOnly(t *testing.T) {
+	handler := lanOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	cases := []struct {
+		remote string
+		want   int
+	}{
+		{"192.168.2.50:1234", http.StatusOK},
+		{"10.0.0.5:1234", http.StatusOK},
+		{"127.0.0.1:1234", http.StatusOK},
+		{"[fe80::1]:1234", http.StatusOK},
+		{"[fd00::1]:1234", http.StatusOK}, // ULA is private
+		{"203.0.113.9:1234", http.StatusForbidden},
+		{"[2001:db8::1]:1234", http.StatusForbidden},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest("GET", "/api/probe", nil)
+		req.RemoteAddr = c.remote
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("remote %s: got %d, want %d", c.remote, rec.Code, c.want)
+		}
 	}
 }
 

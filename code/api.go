@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -52,6 +53,25 @@ func (h *sseHub) broadcast(event string, payload interface{}) {
 }
 
 // ---- auth ----
+
+// lanOnly rejects requests that don't originate from a private/local
+// address. The listener binds all interfaces under host networking, and
+// while SPR's firewall drops unsolicited WAN input, a router API should not
+// depend on a single layer for that.
+func lanOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func authOK(r *http.Request) bool {
 	token := configCopy().HAToken
@@ -218,7 +238,7 @@ func startHAServer() {
 	addr := fmt.Sprintf(":%d", configCopy().ListenPort)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           router,
+		Handler:           lanOnly(http.MaxBytesHandler(router, 64*1024)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Println("HA API listening on", addr)

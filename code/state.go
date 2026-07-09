@@ -100,12 +100,29 @@ func pollLoop() {
 	interval := time.Duration(configCopy().PollIntervalSeconds) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// Floor between event-driven refreshes so a device spamming DHCP/auth
+	// events can't make us hammer the SPR API. Scheduled polls always run.
+	const minEventInterval = 2 * time.Second
+	last := time.Now()
 	for {
+		eventDriven := false
 		select {
 		case <-ticker.C:
 		case <-gRefreshNow:
+			eventDriven = true
+		}
+		if eventDriven {
+			if since := time.Since(last); since < minEventInterval {
+				time.Sleep(minEventInterval - since)
+				select { // collapse events that piled up while sleeping
+				case <-gRefreshNow:
+				default:
+				}
+			}
 		}
 		refreshState()
+		last = time.Now()
 	}
 }
 

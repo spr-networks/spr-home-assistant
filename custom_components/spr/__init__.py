@@ -39,8 +39,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         entries: list[SprConfigEntry] = hass.config_entries.async_loaded_entries(DOMAIN)
         if not entries:
             raise HomeAssistantError("No SPR router is configured")
+
+        # Prefer the router that actually knows this device, so a magic
+        # packet lands in the right broadcast domain on multi-router setups.
+        owning = [e for e in entries if mac in e.runtime_data.data.devices]
+        ordered = owning or entries
+
         errors = []
-        for entry in entries:
+        for entry in ordered:
             try:
                 await entry.runtime_data.api.wake_on_lan(mac)
                 return

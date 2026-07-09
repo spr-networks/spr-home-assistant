@@ -39,7 +39,10 @@ class SprApiClient:
 
     @property
     def base_url(self) -> str:
-        return f"http://{self._host}:{self._port}"
+        host = self._host
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"  # bare IPv6 from discovery
+        return f"http://{host}:{self._port}"
 
     def _headers(self) -> dict[str, str]:
         if not self._token:
@@ -97,7 +100,12 @@ class SprApiClient:
             resp = await self._session.get(
                 f"{self.base_url}/api/events",
                 headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=None, sock_connect=10),
+                # sock_read > the server's 30s keepalive so a half-open TCP
+                # drop (no FIN) is detected and the loop reconnects instead
+                # of wedging forever
+                timeout=aiohttp.ClientTimeout(
+                    total=None, sock_connect=10, sock_read=60
+                ),
             )
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise SprApiError(f"SSE connect failed: {err}") from err

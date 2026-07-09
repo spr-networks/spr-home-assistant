@@ -106,11 +106,13 @@ class SprCoordinator(DataUpdateCoordinator[SprData]):
 
         now = dt_util.utcnow()
         new_macs: list[str] = []
+        seen_macs: set[str] = set()
 
         for raw_dev in raw.get("devices") or []:
             mac = format_mac(raw_dev.get("mac", ""))
             if not mac or mac == "00:00:00:00:00:00":
                 continue
+            seen_macs.add(mac)
             device = self._devices.get(mac)
             if device is None:
                 device = SprDevice(mac=mac)
@@ -142,6 +144,12 @@ class SprCoordinator(DataUpdateCoordinator[SprData]):
                 device.last_seen is not None
                 and now - device.last_seen < self.consider_home
             )
+
+        # devices deleted on the router: drop them so their entities go
+        # unavailable instead of freezing on stale state
+        for mac in list(self._devices):
+            if mac not in seen_macs:
+                del self._devices[mac]
 
         data = SprData(
             router=raw.get("router") or {},
