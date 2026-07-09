@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from homeassistant.config_entries import SOURCE_USER
+from ipaddress import ip_address
+
+from homeassistant.config_entries import SOURCE_USER, SOURCE_ZEROCONF
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.const import (
     CONF_TOKEN,
     CONF_URL,
@@ -74,13 +77,74 @@ STATE = {
 }
 
 
+DISCOVERY_URL = (
+    "https://192.0.2.1/admin/custom_plugin/home_assistant/static/discovery.json"
+)
+DISCOVERY_DOC = {"product": "spr", "api": 1, "id": "routerid123", "name": "spr-test"}
+
+
 @pytest.fixture
 def mock_spr_api(aioclient_mock: AiohttpClientMocker) -> AiohttpClientMocker:
     aioclient_mock.get(f"{BASE}/probe", json=PROBE)
     aioclient_mock.get(f"{BASE}/state", json=STATE)
+    aioclient_mock.get(DISCOVERY_URL, json=DISCOVERY_DOC)
     # keep the SSE listener from erroring in the background
     aioclient_mock.get(f"{BASE}/events", exc=OSError("no sse in tests"))
     return aioclient_mock
+
+
+def _zeroconf_info() -> ZeroconfServiceInfo:
+    return ZeroconfServiceInfo(
+        ip_address=ip_address("192.0.2.1"),
+        ip_addresses=[ip_address("192.0.2.1")],
+        port=443,
+        hostname="spr.local.",
+        type="_spr-ha._tcp.local.",
+        name="SPR (spr-test)._spr-ha._tcp.local.",
+        properties={"product": "spr"},
+    )
+
+
+async def test_zeroconf_discovery_then_token(
+    hass: HomeAssistant, mock_spr_api: AiohttpClientMocker
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_ZEROCONF}, data=_zeroconf_info()
+    )
+    # discovery reads the unauthenticated static doc, then asks for a token
+    assert result["type"] == "form"
+    assert result["step_id"] == "discovery_confirm"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_URL: "https://192.0.2.1", CONF_TOKEN: TOKEN, CONF_VERIFY_SSL: False},
+    )
+    assert result["type"] == "create_entry", result
+    assert result["result"].unique_id == "routerid123"
+
+
+async def test_zeroconf_existing_entry_not_rewritten(
+    hass: HomeAssistant, mock_spr_api: AiohttpClientMocker
+) -> None:
+    """A discovery broadcast must not repoint a configured router's URL."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="routerid123",
+        data={
+            CONF_URL: "https://192.168.9.9",
+            CONF_TOKEN: TOKEN,
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_ZEROCONF}, data=_zeroconf_info()
+    )
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    # URL is untouched — the forged/benign broadcast did not redirect it
+    assert entry.data[CONF_URL] == "https://192.168.9.9"
 
 
 async def test_user_flow_creates_entry(

@@ -245,6 +245,43 @@ func TestReadOnlyRouter(t *testing.T) {
 	}
 }
 
+// The static discovery document is unauthenticated (SPR serves it on its
+// public router) and must carry no secrets or live data.
+func TestStaticDiscovery(t *testing.T) {
+	server, _ := mockSPR(t)
+	setupTestEnv(t, server)
+	loadConfig()
+	refreshState()
+
+	router := newRouter()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/static/discovery.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovery.json: got %d", rec.Code)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["product"] != "spr" || doc["id"] == "" || doc["id"] == nil {
+		t.Errorf("discovery malformed: %v", doc)
+	}
+	// must NOT leak version or any device data on the unauth surface
+	if _, ok := doc["version"]; ok {
+		t.Error("discovery.json leaks version on the unauthenticated path")
+	}
+	if _, ok := doc["devices"]; ok {
+		t.Error("discovery.json leaks device data")
+	}
+
+	// non-GET is rejected
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/static/discovery.json", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST discovery: got %d, want 405", rec.Code)
+	}
+}
+
 func TestProbe(t *testing.T) {
 	server, _ := mockSPR(t)
 	setupTestEnv(t, server)

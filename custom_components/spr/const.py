@@ -8,6 +8,11 @@ DOMAIN = "spr"
 # proxy prefix; the plugin serves the /ha/v1/* routes behind it.
 PROXY_BASE = "/plugins/home_assistant/ha/v1"
 
+# Unauthenticated identify document, served on SPR's public static route.
+# Used only by the zeroconf discovery step to present the router; carries no
+# secret and no live data.
+DISCOVERY_PATH = "/admin/custom_plugin/home_assistant/static/discovery.json"
+
 DEFAULT_VERIFY_SSL = False  # SPR ships a self-signed cert on the LAN
 
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=10)

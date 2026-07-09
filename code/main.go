@@ -11,7 +11,8 @@ func main() {
 
 	go pollLoop()
 	go sprbusListener()
+	go advertiseMDNS()
 
-	// The unix-socket API is the only listener; SPR proxies it to HA.
+	// The unix-socket API is the only HTTP listener; SPR proxies it to HA.
 	startUnixServer()
 }

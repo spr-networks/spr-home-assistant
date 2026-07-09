@@ -28,6 +28,9 @@ type Config struct {
 
 	// PollIntervalSeconds between SPR state refreshes (default 10).
 	PollIntervalSeconds int
+
+	// MDNSDisabled turns off the Home Assistant discovery beacon.
+	MDNSDisabled bool
 }
 
 var gConfig = Config{PollIntervalSeconds: 10}

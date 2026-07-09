@@ -84,6 +84,41 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, gState.get())
 }
 
+// handleStaticDiscovery serves the unauthenticated identify document. SPR
+// exposes it at /admin/custom_plugin/home_assistant/static/discovery.json
+// (public router, no auth) because it lives under /static/. It carries only
+// non-secret identity: the opaque router id, product, and display name — no
+// version, no device data, no capability. Home Assistant's config flow reads
+// it to present the router; the token still gates everything under /ha/v1.
+func handleStaticDiscovery(w http.ResponseWriter, r *http.Request) {
+	snap := gState.get()
+	name := snap.Router.Hostname
+	if name == "" {
+		name = "SPR"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, map[string]interface{}{
+		"product": "spr",
+		"api":     1,
+		"id":      configCopy().RouterID,
+		"name":    name,
+	})
+}
+
+// handleIndex serves a minimal static page. HasUI is enabled only so SPR
+// registers the public /static/ route the discovery document needs; this
+// keeps the plugin's UI slot from 404-ing.
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>SPR Home Assistant</title>`+
+		`<body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">`+
+		`<h1>SPR · Home Assistant</h1>`+
+		`<p>This plugin exposes read-only router state to Home Assistant. It has no `+
+		`interactive UI. Add it in Home Assistant with a read-only SPR API token `+
+		`scoped to <code>/plugins/home_assistant/:r</code>.</p>`+
+		`<p><a href="https://github.com/spr-networks/home_assistant_integration">Documentation</a></p>`)
+}
+
 func handleDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, gState.get().Devices)
 }
@@ -145,11 +180,19 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 // newRouter builds the read-only route table served over the unix socket.
 func newRouter() *mux.Router {
 	router := mux.NewRouter().StrictSlash(true)
+	// Authenticated (SPR proxies these at /plugins/home_assistant/, gated by
+	// the caller's scoped token). Read-only; wake writes only to the LAN.
 	router.HandleFunc("/ha/v1/probe", handleProbe).Methods("GET")
 	router.HandleFunc("/ha/v1/state", handleState).Methods("GET")
 	router.HandleFunc("/ha/v1/devices", handleDevices).Methods("GET")
 	router.HandleFunc("/ha/v1/wake", handleWake).Methods("GET")
 	router.HandleFunc("/ha/v1/events", handleEvents).Methods("GET")
+
+	// Unauthenticated static content. SPR only ever routes /static/* here via
+	// its public proxy (it hardcodes the /static/ prefix), so nothing under
+	// /ha/v1 is reachable without auth. Discovery data only — no secrets.
+	router.HandleFunc("/static/discovery.json", handleStaticDiscovery).Methods("GET")
+	router.HandleFunc("/index.html", handleIndex).Methods("GET")
 	return router
 }
 

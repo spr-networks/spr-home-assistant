@@ -42,8 +42,22 @@ Home Assistant ──HTTPS──> SPR API (443/80) ──unix socket──> ha_s
 - The plugin finds the SPR API at the container's default gateway (or
   `127.0.0.1` when `VIRTUAL_SPR=1` puts it in the `service:base`
   namespace); `SPR_API_BASE` overrides for tests.
-- No mDNS advertisement, no discovery listeners, no broadcast traffic.
-  Setup is manual: you give HA the router URL and the token.
+
+### Discovery
+
+Home Assistant can surface the router automatically. The plugin advertises a
+DNS-SD beacon (`_spr-ha._tcp`) over mDNS, and serves a small **static
+identify document** — `{product, id, name}`, no version, no device data — on
+SPR's *unauthenticated* public static path
+(`/admin/custom_plugin/home_assistant/static/discovery.json`). That path is
+gated on `HasUI: true` and, by SPR's design, can only ever reach the
+plugin's `/static/*` — the sensitive `/ha/v1/*` routes stay behind the token.
+
+The discovery step reads that document only to present the router and dedup
+on its id; it **never rewrites a configured entry's URL from a broadcast**,
+so a forged advertisement cannot redirect a router's token to an attacker.
+The user still supplies the token by hand. Manual setup (URL + token)
+remains available and needs no discovery.
 
 ## Device sync: SPR as a discovery provider for Home Assistant
 

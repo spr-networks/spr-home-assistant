@@ -14,11 +14,32 @@ from typing import Any
 
 import aiohttp
 
-from .const import PROXY_BASE
+from .const import DISCOVERY_PATH, PROXY_BASE
 
 _LOGGER = logging.getLogger(__name__)
 
 API_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+
+async def fetch_discovery(
+    session: aiohttp.ClientSession, url: str
+) -> dict[str, Any]:
+    """Fetch the unauthenticated identify document from a router URL.
+
+    Used by the zeroconf flow before any token exists. No auth, no secret —
+    if it can't be fetched or isn't an SPR router, raise SprApiError.
+    """
+    try:
+        resp = await session.get(
+            f"{url.rstrip('/')}{DISCOVERY_PATH}", timeout=API_TIMEOUT
+        )
+        resp.raise_for_status()
+        data = await resp.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+        raise SprApiError(f"discovery fetch failed: {err}") from err
+    if not isinstance(data, dict) or data.get("product") != "spr":
+        raise SprApiError("not an SPR router")
+    return data
 
 
 class SprApiError(Exception):

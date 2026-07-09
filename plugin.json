@@ -6,7 +6,7 @@
   "Plus": false,
   "GitURL": "https://github.com/spr-networks/home_assistant_integration",
   "ComposeFilePath": "plugins/home_assistant_integration/docker-compose.yml",
-  "HasUI": false,
+  "HasUI": true,
   "InstallTokenPath": "/configs/plugins/home_assistant/api-token",
   "ScopedPaths": [
     "/topology:r",

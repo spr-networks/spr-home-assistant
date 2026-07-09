@@ -1,5 +1,6 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Connect to SPR",
@@ -11,6 +12,20 @@
         },
         "data_description": {
           "url": "For example https://192.168.2.1 or https://spr.local",
+          "token": "An SPR token scoped to /plugins/home_assistant/:r — it can only read",
+          "verify_ssl": "Disable for SPR's default self-signed certificate"
+        }
+      },
+      "discovery_confirm": {
+        "title": "Set up {name}",
+        "description": "Home Assistant found the SPR router “{name}”. Enter a read-only API token to finish. Create it in the SPR UI (Auth → API Tokens) scoped to `/plugins/home_assistant/:r`.",
+        "data": {
+          "url": "Router URL",
+          "token": "API token (read-only scope)",
+          "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "url": "Confirm the router address before entering your token",
           "token": "An SPR token scoped to /plugins/home_assistant/:r — it can only read",
           "verify_ssl": "Disable for SPR's default self-signed certificate"
         }
