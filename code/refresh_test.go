@@ -65,7 +65,8 @@ func mockSPR(t *testing.T) (*httptest.Server, *map[string]DeviceEntry) {
 	})
 	mux.HandleFunc("/arp", writeAs([]ArpEntry{
 		{IP: "192.168.2.101", MAC: "aa:bb:cc:dd:ee:02", Flags: "0x2", Device: "eth1"},
-		{IP: "1.2.3.4", MAC: "aa:bb:cc:dd:ee:99", Flags: "0x2", Device: "eth0"}, // wan side, ignored
+		{IP: "1.2.3.4", MAC: "aa:bb:cc:dd:ee:99", Flags: "0x2", Device: "eth0"},   // wan side, ignored
+		{IP: "192.168.2.100", MAC: "aa:bb:cc:dd:ee:01", Flags: "0x6", Device: "eth1"}, // seeded permanent, not presence
 	}))
 	mux.HandleFunc("/info/uptime", writeAs(map[string]interface{}{
 		"uptime_total_seconds": 3600.0, "load_1m": 0.5, "load_5m": 0.4, "load_15m": 0.3,

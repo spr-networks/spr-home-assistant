@@ -75,7 +75,9 @@ func refreshState() {
 			continue
 		}
 		flags, err := strconv.ParseInt(strings.TrimPrefix(entry.Flags, "0x"), 16, 32)
-		if err != nil || flags&0x2 == 0 {
+		// need a learned, complete entry (0x2): SPR seeds permanent (0x4)
+		// entries for known devices, which say nothing about presence
+		if err != nil || flags&0x2 == 0 || flags&0x4 != 0 {
 			continue
 		}
 		mac := normalizeMAC(entry.MAC)
