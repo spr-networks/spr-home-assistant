@@ -143,12 +143,19 @@ jobs:
 
       - name: Verify signature and attestation
         if: ${{ steps.repro.outputs.push == 'true' }}
+        # Identity regexp is derived from the GitHub context so it matches the
+        # OIDC certificate subject regardless of the repository's name, and
+        # leaves the ref (@...) open so it holds for main and dev alike.
+        env:
+          REPO: ${{ github.repository }}
+          ISSUER: https://token.actions.githubusercontent.com
         run: |
+          IDENTITY="^https://github\.com/${REPO}/\.github/workflows/docker-image\.yml@"
           cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp '^https://github\.com/spr-networks/home_assistant_integration/\.github/workflows/docker-image\.yml@' \
+            --certificate-oidc-issuer "$ISSUER" \
+            --certificate-identity-regexp "$IDENTITY" \
             ${{ steps.digest.outputs.image }}
           cosign verify-attestation --type slsaprovenance1 \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp '^https://github\.com/spr-networks/home_assistant_integration/\.github/workflows/docker-image\.yml@' \
+            --certificate-oidc-issuer "$ISSUER" \
+            --certificate-identity-regexp "$IDENTITY" \
             ${{ steps.digest.outputs.image }}
