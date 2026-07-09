@@ -120,8 +120,12 @@ func refreshState() {
 	}
 	latest := latestAvailableVersion(version)
 
+	// copy under lock: sprbus events write gState.lastSeen concurrently
 	gState.mtx.Lock()
-	lastSeen := gState.lastSeen
+	lastSeen := make(map[string]int64, len(gState.lastSeen))
+	for mac, ts := range gState.lastSeen {
+		lastSeen[mac] = ts
+	}
 	prevConnected := map[string]bool{}
 	for _, d := range gState.snapshot.Devices {
 		prevConnected[d.MAC] = d.Connected
@@ -215,6 +219,12 @@ func refreshState() {
 	}
 
 	gState.mtx.Lock()
+	// merge sightings back without clobbering fresher event-driven updates
+	for mac, ts := range lastSeen {
+		if ts > gState.lastSeen[mac] {
+			gState.lastSeen[mac] = ts
+		}
+	}
 	if !gState.prevTrafficAt.IsZero() {
 		dt := now.Sub(gState.prevTrafficAt).Seconds()
 		if dt > 0 && wanRxTotal >= gState.prevWANRx && wanTxTotal >= gState.prevWANTx {

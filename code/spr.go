@@ -15,7 +15,15 @@ import (
 // The SPR API listens on localhost:80 (this container runs with host
 // networking). Auth is the plugin install token SPR wrote to
 // InstallTokenPath, scoped to the paths in plugin.json.
-var SPRAPIBase = "http://localhost:80"
+// SPR_API_BASE overrides for tests/dev outside the router.
+var SPRAPIBase = envOr("SPR_API_BASE", "http://localhost:80")
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 var macRe = regexp.MustCompile(`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`)
 

@@ -20,3 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: home-assistant/actions/hassfest@master
+
+  ha-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install test harness
+        run: pip install -r requirements-test.txt
+      - name: Integration tests
+        run: python -m pytest tests/ -q

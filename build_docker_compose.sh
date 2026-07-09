@@ -61,8 +61,9 @@ if docker --help | grep -q buildx; then
       *) ARGS+=("$a") ;;
     esac
   done
+  # ${ARGS[@]+...} keeps bash 3.2 (macOS) happy under set -u with no args
   docker buildx bake --builder super-builder --file docker-compose.yml \
-    "${BAKE_SET[@]}" --set "*.output=${OUTPUT}" "${ARGS[@]}"
+    "${BAKE_SET[@]}" --set "*.output=${OUTPUT}" ${ARGS[@]+"${ARGS[@]}"}
 else
   # Fallback (no buildx): NOT bit-for-bit (docker exporter can't rewrite timestamps).
   export DOCKER_BUILDKIT=1
