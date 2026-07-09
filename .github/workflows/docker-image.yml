@@ -18,8 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
+      id-token: write   # keyless cosign signing via the GitHub OIDC token
     steps:
       -
         name: Checkout
@@ -31,19 +30,16 @@ jobs:
         run: echo "RELEASE_VERSION=$(git describe --tags --abbrev=0 | grep -Eo '[0-9]+\.[0-9]+.[0-9]+')" >> $GITHUB_ENV
       -
         name: Set release channel for dev
-        run: echo "RELEASE_CHANNEL=-dev" >> $GITHUB_ENV
         if: ${{ github.ref_name == 'dev' }}
-      -
-        name: Test release tag version and channel
-        run: echo "RELEASE_VERSION == $RELEASE_VERSION  CHANNEL == $RELEASE_CHANNEL"
+        run: echo "RELEASE_CHANNEL=-dev" >> $GITHUB_ENV
       -
         name: Load reproducible build pins
         run: grep -vE '^[[:space:]]*(#|$)' reproducible.env >> "$GITHUB_ENV"
       -
-        name: Compute SOURCE_DATE_EPOCH (commit time) and push flag
+        name: Compute push flag
         id: repro
         run: |
-          echo "SOURCE_DATE_EPOCH=0" >> "$GITHUB_ENV"
+          # SOURCE_DATE_EPOCH is set to 0 by build_docker_compose.sh itself.
           push=false
           if { [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.ref_name }}" = "main" ]; } \
              || { [ -n "${{ env.RELEASE_CHANNEL }}" ] && [ "${{ github.event_name }}" = "push" ]; }; then
@@ -51,8 +47,13 @@ jobs:
           fi
           echo "push=$push" >> "$GITHUB_OUTPUT"
       -
-        name: Normalize file modes for reproducible COPY layers
-        run: find . -path ./.git -prune -o -exec chmod go-w {} +
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=${{ env.BUILDKIT_REF }}
       -
         name: Authenticate to Docker Hub
         if: ${{ vars.DOCKERHUB_USERNAME != '' }}
@@ -61,69 +62,44 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       -
-        name: Set up QEMU
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
-
-      -
-        name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: image=${{ env.BUILDKIT_REF }}
-      -
         name: Authenticate to ghcr
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
       -
-        name: build options
-        run: echo "tags:" "*.platform=linux/amd64,linux/arm64" "tags=home_assistant_integration_ha_sync:${RELEASE_VERSION:-latest}"
+        # The SAME reproducible build the maintainer runs locally — CI does not
+        # reconstruct the build a second way. --metadata-file captures the
+        # pushed digest for signing.
+        name: Build (and push) with the reproducible build script
+        run: |
+          PUSH=""
+          [ "${{ steps.repro.outputs.push }}" = "true" ] && PUSH="--push"
+          ./build_docker_compose.sh \
+            --set "*.platform=linux/amd64,linux/arm64" \
+            --metadata-file /tmp/bake-meta.json \
+            $PUSH
+      -
+        name: Resolve pushed image digest
+        id: digest
+        if: ${{ steps.repro.outputs.push == 'true' }}
+        run: |
+          DIGEST=$(jq -r '.ha_sync["containerimage.digest"]' /tmp/bake-meta.json)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/spr-networks/home_assistant_integration_ha_sync@${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        id: build-and-push
-        uses: docker/build-push-action@v6
-        env:
-          SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
-        with:
-          platforms: linux/amd64,linux/arm64
-          provenance: true
-          build-args: |
-            UBUNTU_REF=${{ env.UBUNTU_REF }}
-            ALPINE_REF=${{ env.ALPINE_REF }}
-            CONTAINER_TEMPLATE_REF=${{ env.CONTAINER_TEMPLATE_REF }}
-            UBUNTU_SNAPSHOT=${{ env.UBUNTU_SNAPSHOT }}
-            GO_VERSION=${{ env.GO_VERSION }}
-            GO_SHA256_AMD64=${{ env.GO_SHA256_AMD64 }}
-            GO_SHA256_ARM64=${{ env.GO_SHA256_ARM64 }}
-          labels: |
-            org.supernetworks.ci=true
-            org.supernetworks.version=${{ env.RELEASE_VERSION || 'latest' }}${{ env.RELEASE_CHANNEL }}
-          outputs: type=image,"name=ghcr.io/spr-networks/home_assistant_integration_ha_sync:${{ env.RELEASE_VERSION || 'latest' }},ghcr.io/spr-networks/home_assistant_integration_ha_sync:latest",push=${{ steps.repro.outputs.push }},rewrite-timestamp=true
-
-      - name: Get images from docker-compose.yml
-        id: get-images
-        uses: mikefarah/yq@master
-        with:
-          cmd: yq -o json -I 0 '[.services|.[]|.image]' docker-compose.yml
-
-      # Install the cosign tool
       # https://github.com/sigstore/cosign-installer
       - name: Install Cosign
+        if: ${{ steps.repro.outputs.push == 'true' }}
         uses: sigstore/cosign-installer@v3.6.0
 
-      - name: Sign the images with GitHub OIDC Token
-        if: ${{ (github.event_name == 'workflow_run' && github.ref_name == 'main') || (env.RELEASE_CHANNEL != '' && github.event_name == 'push') }}
-        env:
-          IMG1: ghcr.io/spr-networks/home_assistant_integration_ha_sync:${{ env.RELEASE_VERSION || 'latest' }}@${{ steps.build-and-push.outputs.digest }}
-          IMG2: ghcr.io/spr-networks/home_assistant_integration_ha_sync:latest@${{ steps.build-and-push.outputs.digest }}
-        run: |
-          cosign sign --yes ${{ env.IMG1 }} ${{ env.IMG2 }}
+      - name: Sign the image with the GitHub OIDC token
+        if: ${{ steps.repro.outputs.push == 'true' }}
+        run: cosign sign --yes ${{ steps.digest.outputs.image }}
 
       # actions/attest-build-provenance needs GitHub Enterprise on private
-      # repos, so the provenance attestation is done with cosign instead:
-      # keyless via the GitHub OIDC token, stored in the registry next to the
-      # image, logged in Rekor.
+      # repos, so the SLSA provenance attestation is done with cosign instead:
+      # keyless via the GitHub OIDC token, stored beside the image, logged in
+      # Rekor.
       - name: Generate SLSA provenance predicate
-        if: ${{ (github.event_name == 'workflow_run' && github.ref_name == 'main') || (env.RELEASE_CHANNEL != '' && github.event_name == 'push') }}
+        if: ${{ steps.repro.outputs.push == 'true' }}
         run: |
           cat > /tmp/predicate.json <<EOF
           {
@@ -161,31 +137,18 @@ jobs:
           }
           EOF
 
-      - name: Attest build provenance with GitHub OIDC Token
-        if: ${{ (github.event_name == 'workflow_run' && github.ref_name == 'main') || (env.RELEASE_CHANNEL != '' && github.event_name == 'push') }}
-        env:
-          IMG: ghcr.io/spr-networks/home_assistant_integration_ha_sync@${{ steps.build-and-push.outputs.digest }}
-        run: |
-          cosign attest --yes --type slsaprovenance1 --predicate /tmp/predicate.json ${{ env.IMG }}
+      - name: Attest build provenance with the GitHub OIDC token
+        if: ${{ steps.repro.outputs.push == 'true' }}
+        run: cosign attest --yes --type slsaprovenance1 --predicate /tmp/predicate.json ${{ steps.digest.outputs.image }}
 
       - name: Verify signature and attestation
-        if: ${{ (github.event_name == 'workflow_run' && github.ref_name == 'main') || (env.RELEASE_CHANNEL != '' && github.event_name == 'push') }}
-        env:
-          IMG: ghcr.io/spr-networks/home_assistant_integration_ha_sync@${{ steps.build-and-push.outputs.digest }}
+        if: ${{ steps.repro.outputs.push == 'true' }}
         run: |
           cosign verify \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp '^https://github\.com/spr-networks/home_assistant_integration/\.github/workflows/docker-image\.yml@' \
-            ${{ env.IMG }}
+            ${{ steps.digest.outputs.image }}
           cosign verify-attestation --type slsaprovenance1 \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp '^https://github\.com/spr-networks/home_assistant_integration/\.github/workflows/docker-image\.yml@' \
-            ${{ env.IMG }}
-
-      - name: Set Matrix output
-        id: set-matrix
-        run: |
-          echo "matrix=${{ steps.get-images.outputs.result }}" >> $GITHUB_OUTPUT
-
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+            ${{ steps.digest.outputs.image }}
