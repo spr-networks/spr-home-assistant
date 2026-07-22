@@ -1,7 +1,7 @@
 {
   "Name": "home_assistant",
   "URI": "home_assistant",
-  "UnixPath": "/state/plugins/home_assistant/socket",
+  "UnixPath": "/state/plugins/home_assistant/socket.sock",
   "Enabled": true,
   "Plus": false,
   "GitURL": "https://github.com/spr-networks/home_assistant_integration",
