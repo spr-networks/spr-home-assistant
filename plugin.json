@@ -5,8 +5,14 @@
   "Enabled": true,
   "Plus": false,
   "GitURL": "https://github.com/spr-networks/home_assistant_integration",
-  "ComposeFilePath": "plugins/home_assistant_integration/docker-compose.yml",
+  "ComposeFilePath": "plugins/home_assistant_integration/docker-compose-krun.yml",
   "HasUI": false,
+  "NetworkCapabilities": {
+    "Interface": "khomeassist0",
+    "DeviceMAC": "02:53:50:52:4b:01",
+    "Policies": ["wan", "dns", "api", "lan"],
+    "Groups": []
+  },
   "InstallTokenPath": "/configs/plugins/home_assistant/api-token",
   "ScopedPaths": [
     "/topology:r",

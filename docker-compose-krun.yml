@@ -1,0 +1,20 @@
+services:
+  ha_sync:
+    extends:
+      file: docker-compose.yml
+      service: ha_sync
+    runtime: ${SPR_KRUN_RUNTIME:-spr-krun}
+    network_mode: host
+    networks: !reset []
+    annotations:
+      krun.cpus: "${SPR_KRUN_CPUS:-1}"
+      krun.ram_mib: "${SPR_KRUN_RAM_MIB:-512}"
+      krun.tap_name: "khomeassist0"
+      krun.net_mac: "${SPR_KRUN_MAC:-02:53:50:52:4b:01}"
+      krun.vsock_path: "/state/plugins/home_assistant/socket"
+      krun.vsock_port: "4040"
+    environment:
+      SPR_KRUN_PLUGIN_SOCKET: "/run/spr-krun-plugin/home-assistant.sock"
+      SPR_KRUN_VSOCK_PORT: "4040"
+    devices:
+      - "/dev/net/tun:/dev/net/tun"

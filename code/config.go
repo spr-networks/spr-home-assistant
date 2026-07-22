@@ -11,7 +11,7 @@ import (
 
 var TEST_PREFIX = os.Getenv("TEST_PREFIX")
 
-var UNIX_PLUGIN_LISTENER = TEST_PREFIX + "/state/plugins/home_assistant/socket"
+var UNIX_PLUGIN_LISTENER = TEST_PREFIX + "/run/spr-krun-plugin/home-assistant.sock"
 var ConfigFile = TEST_PREFIX + "/configs/plugins/home_assistant/config.json"
 var APITokenFile = TEST_PREFIX + "/configs/plugins/home_assistant/api-token"
 var DevicesPublicConfigFile = TEST_PREFIX + "/state/public/devices-public.json"
