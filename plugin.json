@@ -5,7 +5,7 @@
   "Enabled": true,
   "Plus": false,
   "GitURL": "https://github.com/spr-networks/home_assistant_integration",
-  "ComposeFilePath": "plugins/home_assistant_integration/docker-compose-krun.yml",
+  "Runtime": "kvm",
   "HasUI": false,
   "NetworkCapabilities": {
     "Interface": "khomeassist0",

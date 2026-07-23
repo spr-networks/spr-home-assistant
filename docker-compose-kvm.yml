@@ -4,17 +4,30 @@ services:
       file: docker-compose.yml
       service: ha_sync
     runtime: ${SPR_KRUN_RUNTIME:-spr-krun}
-    network_mode: host
-    networks: !reset []
+    networks:
+      homeassistantnet:
     annotations:
       krun.cpus: "${SPR_KRUN_CPUS:-1}"
-      krun.ram_mib: "${SPR_KRUN_RAM_MIB:-512}"
+      krun.ram_mib: "${SPR_KRUN_RAM_MIB:-128}"
       krun.tap_name: "khomeassist0"
-      krun.net_mac: "${SPR_KRUN_MAC:-02:53:50:52:4b:01}"
+      krun.net_uplink: "eth0"
       krun.vsock_path: "/state/plugins/home_assistant/socket.sock"
       krun.vsock_port: "4040"
     environment:
       SPR_KRUN_PLUGIN_SOCKET: "/run/spr-krun-plugin/home-assistant.sock"
       SPR_KRUN_VSOCK_PORT: "4040"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     devices:
       - "/dev/net/tun:/dev/net/tun"
+
+networks:
+  homeassistantnet:
+    name: home-assistant
+    driver_opts:
+      com.docker.network.bridge.name: khomeassist0
+    ipam:
+      config:
+        - subnet: 172.30.120.0/24
