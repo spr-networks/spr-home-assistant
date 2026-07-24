@@ -11,7 +11,7 @@ x-labels:
 services:
   ha_sync:
     container_name: spr_ha_sync
-    image: ghcr.io/spr-networks/home_assistant_integration_ha_sync:${RELEASE_VERSION:-latest}${RELEASE_CHANNEL:-}
+    image: ghcr.io/spr-networks/home_assistant_integration_ha_sync:latest
     build:
       context: .
       labels: *default-labels
